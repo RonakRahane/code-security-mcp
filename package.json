@@ -1,0 +1,43 @@
+{
+  "name": "sentinel-mcp",
+  "version": "2.0.0",
+  "description": "Security Agent MCP — scans code for vulnerabilities, reviews PRs, detects secrets, auto-fixes issues. Works with Claude, ChatGPT, Cursor, Ollama, and any MCP client.",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "sentinel-mcp": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/index.ts",
+    "start": "node dist/index.js",
+    "inspect": "npx @modelcontextprotocol/inspector node dist/index.js",
+    "dashboard": "node dist/dashboard/generate-report.js",
+    "benchmark": "npm run build && node dist/reporting/benchmark-runner.js ./test ./test/ground-truth.json"
+  },
+  "keywords": [
+    "mcp",
+    "security",
+    "code-review",
+    "vulnerability-scanner",
+    "claude",
+    "chatgpt",
+    "ollama"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@babel/parser": "^7.29.2",
+    "@babel/traverse": "^7.29.0",
+    "@babel/types": "^7.29.0",
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "@octokit/rest": "^21.0.0",
+    "glob": "^11.0.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/babel__traverse": "^7.28.0",
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.0"
+  }
+}
