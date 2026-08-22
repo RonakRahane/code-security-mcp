@@ -1,0 +1,36 @@
+# Demonstrates how a pull-request comment is attributed when it is posted by a
+# workflow rather than by a person's token. Lives only on the demo branch and
+# goes away with it.
+name: Comment attribution demo
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  comment:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post a comment as the workflow identity
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: [
+                '## Posted by the workflow, not by a person',
+                '',
+                'This comment was created with the `GITHUB_TOKEN` that Actions provides,',
+                'rather than a personal access token. Compare the author of this comment',
+                'with the author of the inline review comments above.',
+                '',
+                'This is the same mechanism `.github/workflows/security-scan.yml` uses to',
+                'post Sentinel results on a pull request.',
+              ].join('\n'),
+            });
