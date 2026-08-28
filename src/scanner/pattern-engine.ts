@@ -183,6 +183,17 @@ function getFileContext(filePath: string, rootDir?: string): FileContext {
     normalized.includes("/fixtures/") ||
     normalized.includes("/mock/") ||
     normalized.includes("/mocks/") ||
+    // Sample applications are not deployed. Express ships demo servers with
+    // hardcoded passwords and plain innerHTML, and every one of the 13 high
+    // findings in a scan of that repository came from examples/. Reporting
+    // them as production issues is the kind of noise that gets a scanner
+    // switched off before it reports anything real.
+    normalized.includes("/example/") ||
+    normalized.includes("/examples/") ||
+    normalized.includes("/demo/") ||
+    normalized.includes("/demos/") ||
+    normalized.includes("/sample/") ||
+    normalized.includes("/samples/") ||
     basename.includes(".test.") ||
     basename.includes(".spec.") ||
     basename.startsWith("test_") ||
@@ -251,6 +262,23 @@ function adjustSeverity(severity: Severity, context: FileContext): Severity {
       case "high": return "low";
       case "medium": return "info";
       case "low": return "info";
+      default: return "info";
+    }
+  }
+
+  // Documentation and .example files. This branch used to be missing: the
+  // context was computed and then discarded, so a README showing
+  // `password: 'mypassword'` was reported at the severity of a real leak.
+  // Every one of axios's 18 high findings, and six of flask's seven, was a
+  // credential in a documentation example.
+  //
+  // Downgraded rather than dropped, because a genuine key does sometimes get
+  // committed in a README - it should stay visible without failing a gate.
+  if (context === "config") {
+    switch (severity) {
+      case "critical": return "low";
+      case "high": return "low";
+      case "medium": return "info";
       default: return "info";
     }
   }

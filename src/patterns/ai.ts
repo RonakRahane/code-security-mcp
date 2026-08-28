@@ -23,7 +23,13 @@ export const aiPatterns: SecurityPattern[] = [
   },
   {
     id: "AI_OUTPUT_TO_EVAL",
-    regex: /(?:eval|Function)\s*\(\s*(?:llm|model|assistant|response|completion|result|output)[A-Za-z0-9_]*\s*\)/i,
+    // `\beval` and `new Function`, not bare `eval|Function`: without the
+    // boundary the alternation matched the tail of any identifier, so
+    // `isFunction(Response)` in axios was reported as critical LLM-output
+    // execution. The property-access tail is what the real case looks like -
+    // `eval(completion.choices[0].message.content)` - which the old pattern,
+    // requiring a bare identifier before `)`, could not match at all.
+    regex: /(?:\beval|\bnew\s+Function)\s*\(\s*(?:llm|model|assistant|response|completion|result|output)[A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+|\[\d+\])*\s*[,)]/i,
     severity: "critical",
     category: "ai",
     cweId: "CWE-95",

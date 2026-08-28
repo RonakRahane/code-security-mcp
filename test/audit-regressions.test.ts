@@ -311,3 +311,56 @@ describe("benign code that structurally resembles a vulnerability", () => {
     });
   }
 });
+
+describe("precision defects found by scanning real projects", () => {
+  const ids = (code: string, file = "/proj/src/a.js") =>
+    scanCode(code, file, undefined, "/proj").findings.map((f) => `${f.ruleId}/${f.severity}`);
+
+  it("does not read Function out of the middle of an identifier", () => {
+    // axios: `isFunction(Response)` was reported as critical LLM-output
+    // execution. The alternation (?:eval|Function) had no word boundary, so it
+    // matched the tail of isFunction, and Response matched the "response"
+    // alternative. Found by scanning axios, not by any fixture.
+    expect(ids("const isResponseSupported = isFunction(Response);")).toEqual([]);
+    expect(ids("const ok = isFunction(handler);")).toEqual([]);
+  });
+
+  it("still reports model output reaching eval", () => {
+    // The same missing boundary meant the rule required a bare identifier
+    // before ")", so it could not match the form it exists to catch.
+    expect(ids("eval(completion.choices[0].message.content);").join())
+      .toMatch(/AI_OUTPUT_TO_EVAL|EVAL_USAGE/);
+    expect(ids("const v = new Function(modelOutput);")).toContainEqual(
+      expect.stringContaining("AI_OUTPUT_TO_EVAL")
+    );
+  });
+
+  it("treats an examples directory as demonstration code", () => {
+    // Every one of express's 13 high findings was a demo server under
+    // examples/ with a hardcoded password or a plain innerHTML.
+    const demo = ids('const password = "hunter2supersecret";', "/proj/examples/auth/index.js");
+    const real = ids('const password = "hunter2supersecret";', "/proj/src/auth.js");
+    expect(demo.every((f) => f.endsWith("/low") || f.endsWith("/info"))).toBe(true);
+    expect(real.some((f) => f.endsWith("/high") || f.endsWith("/critical"))).toBe(true);
+  });
+
+  it("does not grade a documentation example as a real leak", () => {
+    // getFileContext classified .md and .rst as "config" and adjustSeverity
+    // then returned the severity unchanged, so the branch was dead. That
+    // accounted for all 18 of axios's high findings and six of flask's seven.
+    const doc = ids('password: "mypassword"', "/proj/docs/authentication.md");
+    expect(doc.every((f) => f.endsWith("/low") || f.endsWith("/info"))).toBe(true);
+  });
+
+  it("keeps documentation phrasing out of the secret detector", () => {
+    // Flask's own class docstring shows SECRET_KEY = 'development key'. The
+    // pattern engine masks docstrings, but the secret detector reads raw text
+    // because masking would blank the string literals secrets live in.
+    const placeholder = detectSecrets("SECRET_KEY = 'development key'", "/proj/src/config.py");
+    expect(placeholder).toEqual([]);
+
+    // A value that actually looks like a credential is still reported.
+    const real = detectSecrets("SECRET_KEY = 'sk_a83Kd92LmQp01ZxYvB44'", "/proj/src/config.py");
+    expect(real.length).toBeGreaterThan(0);
+  });
+});

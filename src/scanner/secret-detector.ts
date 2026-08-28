@@ -109,6 +109,10 @@ const PLACEHOLDER_VALUE: readonly RegExp[] = [
   /^\*{4,}$/,
   /^\.{3,}$/,
   /^(?:foo|bar|baz|abc123|password|secret|changeit|123456|hunter2)$/i,
+  // Documentation phrasing for a value the reader is meant to replace. Flask's
+  // own docstring shows `SECRET_KEY = 'development key'`, which was reported at
+  // high severity. A credential does not read as two English words.
+  /^(?:development|dev|testing|demo|local|placeholder)[-_ ](?:key|secret|token|password)$/i,
 ];
 
 /**
