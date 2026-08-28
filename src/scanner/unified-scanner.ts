@@ -9,7 +9,7 @@ import { errorMessage, logger } from "../core/logger.js";
 import { safeRealpath } from "../core/paths.js";
 import { computeSeveritySummary, sortBySeverity } from "../core/severity.js";
 import { scanWithSemgrep } from "./semgrep.js";
-import { scanCode, shouldSkipFile } from "./pattern-engine.js";
+import { gradeFindingByContext, scanCode, shouldSkipFile } from "./pattern-engine.js";
 import { detectSecrets } from "./secret-detector.js";
 import { auditDependencies } from "./dependency-auditor.js";
 import {
@@ -126,6 +126,18 @@ export async function runUnifiedScan(
     root: pathRoot,
   });
   for (const item of sweep.findings) allFindings.push(item);
+
+  // Every finding is graded here, whatever produced it. Each engine used to
+  // decide for itself, so a deliberately fake credential in test/fixtures was
+  // reported low by the pattern engine and critical by Semgrep and the secret
+  // detector in the same scan. This repository hid that behind
+  // `.sentinelignore`, so its own scan looked clean for a reason unrelated to
+  // the tool getting the case right - CI removed the ignore file and 48
+  // criticals appeared. The grader is idempotent, so a finding the pattern
+  // engine already graded passes through unchanged.
+  for (let index = 0; index < allFindings.length; index++) {
+    allFindings[index] = gradeFindingByContext(allFindings[index], pathRoot);
+  }
 
   if (semgrepUsed && sweep.filesSemgrepCovered < sweep.filesScanned) {
     const uncovered = sweep.filesScanned - sweep.filesSemgrepCovered;

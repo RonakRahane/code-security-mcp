@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
   security-events: write
+  # The comment step posts the report to the pull request. Without this it
+  # fails with 403 "Resource not accessible by integration", and because that
+  # step ran last it masked the real reason the job was red.
+  pull-requests: write
 
 jobs:
   security-scan:

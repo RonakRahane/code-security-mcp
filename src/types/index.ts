@@ -62,6 +62,15 @@ export interface Finding {
   confidence?: "high" | "medium" | "low";
   /** Engine that produced this result. Optional for backwards compatibility. */
   source?: "semgrep" | "compatibility" | "secret-detector" | "iac-detector";
+  /**
+   * Set once the file-context downgrade has been applied, so a finding is
+   * never graded twice. Three engines produce findings and each used to decide
+   * this for itself: the pattern engine downgraded a fixture, Semgrep and the
+   * secret detector did not, and the same fake credential in the same file was
+   * reported at both critical and low. Grading now happens at one choke point
+   * and this marker keeps it idempotent.
+   */
+  contextGraded?: boolean;
   /** Stable, non-secret identifier used by baseline mode and deduplication. */
   fingerprint?: string;
   /** Optional framework/rule metadata supplied by the underlying engine. */

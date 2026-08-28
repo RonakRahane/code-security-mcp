@@ -311,3 +311,51 @@ describe("ignoreBaseline", () => {
     expect(second.findings.every((f) => f.line === 2)).toBe(true);
   }, 120_000);
 });
+
+describe("file context is applied to every engine, not just one", () => {
+  it("grades the same credential the same way whichever engine reports it", async () => {
+    // Three engines produced findings and each decided this for itself: the
+    // pattern engine downgraded a fixture, Semgrep and the secret detector did
+    // not. The same fake AWS key was reported low and critical in one scan,
+    // and a repository with security tests drew a wall of criticals - the kind
+    // of false positive that gets a scanner switched off. This repository hid
+    // it behind .sentinelignore, so its own scan looked clean for a reason
+    // unrelated to the tool handling the case; CI removed the ignore file and
+    // 48 criticals appeared.
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "sentinel-context-"));
+    try {
+      fs.mkdirSync(path.join(root, "test"));
+      fs.mkdirSync(path.join(root, "src"));
+      const key = `AKIA${"IOSFODNN7EXAMPLE"}`;
+      fs.writeFileSync(path.join(root, "test", "creds.test.js"), `const k = "${key}";\n`);
+      fs.writeFileSync(path.join(root, "src", "creds.js"), `const k = "${key}";\n`);
+
+      const result = await runUnifiedScan(root, {});
+      const inTest = result.findings.find((f) => f.filePath.includes(`${path.sep}test${path.sep}`));
+      const inSrc = result.findings.find((f) => f.filePath.includes(`${path.sep}src${path.sep}`));
+
+      expect(inSrc?.severity).toBe("critical");
+      expect(inTest?.severity).toBe("low");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not grade a finding twice", async () => {
+    // The pattern engine grades its own findings, and the central pass grades
+    // everything. Without the idempotence marker a critical in a test file
+    // would be downgraded to low and then to info.
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "sentinel-context2-"));
+    try {
+      fs.mkdirSync(path.join(root, "test"));
+      fs.writeFileSync(path.join(root, "test", "weak.test.js"), 'const v = eval(userInput);\n');
+      const result = await runUnifiedScan(root, {});
+      for (const finding of result.findings) {
+        expect(finding.severity).not.toBe("info");
+        expect(finding.contextGraded).toBe(true);
+      }
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});

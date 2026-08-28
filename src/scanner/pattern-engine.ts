@@ -221,6 +221,26 @@ function isNonSecurityHashUse(ruleId: string, line: string): boolean {
   return CONTEXT_SENSITIVE_HASH_RULES.has(ruleId) && NON_SECURITY_HASH_USE.test(line);
 }
 
+/**
+ * Grades a secret-detector finding by the same file context the pattern engine
+ * uses.
+ *
+ * The two engines disagreed: a fake AWS key in `test/` was downgraded when the
+ * pattern engine reported it and left at critical when the secret detector did.
+ * A repository with security tests or fixtures then drew a wall of criticals,
+ * which is the shape of false positive that gets a scanner switched off. This
+ * repository hid it with `.sentinelignore`, so its own scan looked clean for a
+ * reason that had nothing to do with the tool handling the case.
+ */
+export function gradeFindingByContext<T extends Finding>(finding: T, rootDir?: string): T {
+  if (finding.contextGraded) return finding;
+  return {
+    ...finding,
+    severity: adjustSeverity(finding.severity, getFileContext(finding.filePath, rootDir)),
+    contextGraded: true,
+  };
+}
+
 function adjustSeverity(severity: Severity, context: FileContext): Severity {
   if (context === "production") return severity;
 
@@ -356,6 +376,7 @@ export function scanCode(
       findings.push({
         ruleId: pattern.id,
         severity: adjustSeverity(effectiveSeverity, fileContext),
+        contextGraded: true,
         category: pattern.category,
         cweId: pattern.cweId,
         message: pattern.message,
