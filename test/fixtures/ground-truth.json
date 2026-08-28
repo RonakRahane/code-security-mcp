@@ -1,0 +1,74 @@
+{
+  "version": 2,
+  "description": "Internal regression corpus for Sentinel. The labels were hand-authored alongside the detection rules, so they are NOT independent, and the sample is far too small for statistical inference. Use this to catch detection regressions between commits, not to publish accuracy figures. Validated precision and recall require an independent labelled corpus such as the OWASP Benchmark or the Juliet Test Suite.",
+  "lineTolerance": 2,
+  "vulnerable": {
+    "vulnerable-app.js": [
+      13,
+      14,
+      15,
+      16,
+      17,
+      22,
+      28,
+      35,
+      43,
+      47,
+      53,
+      60,
+      67,
+      71,
+      77,
+      80,
+      86,
+      91,
+      111,
+      128
+    ],
+    "vulnerable-app.py": [
+      16,
+      17,
+      18,
+      19,
+      20,
+      28,
+      34,
+      41,
+      47,
+      53,
+      60,
+      66,
+      73,
+      79,
+      84,
+      89,
+      92,
+      95,
+      102,
+      106,
+      109,
+      110,
+      114
+    ],
+    "vulnerable-ai-agent.ts": [
+      25,
+      31
+    ],
+    "vulnerable-ssrf-xxe.js": [
+      6,
+      7,
+      11
+    ],
+    "vulnerable-ssrf.py": [
+      8,
+      12
+    ]
+  },
+  "clean": [
+    "clean-app.js",
+    "clean-app.py",
+    "clean-lookalike.js",
+    "clean-lookalike-net.js",
+    "clean-lookalike-net.py"
+  ]
+}

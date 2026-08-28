@@ -1,15 +1,15 @@
-import { z } from "zod";
-import { errorMessage, logger } from "../core/logger.js";
-import { MAX_PATH_LENGTH, PathValidationError, ValidatedPath, validatePath } from "../core/paths.js";
-
 /**
  * Shared plumbing for MCP tool handlers.
  *
- * Tool arguments are produced by an LLM that has been reading the repository
- * under scan, so they are untrusted input. Every handler validates through here
- * and returns a uniform, machine-readable envelope — the client is a model, and
- * an inconsistent error shape becomes an inconsistent action.
+ * Tool arguments come from an LLM that has been reading the repository under
+ * scan, so they are untrusted. Every handler validates through here and returns
+ * the same response envelope, because the caller is a model and an inconsistent
+ * error shape produces inconsistent behaviour.
  */
+
+import { z } from "zod";
+import { errorMessage, logger } from "../core/logger.js";
+import { MAX_PATH_LENGTH, PathValidationError, ValidatedPath, validatePath } from "../core/paths.js";
 
 export interface ToolResponse {
   [key: string]: unknown;
@@ -28,9 +28,8 @@ export function textResponse(text: string): ToolResponse {
 }
 
 /**
- * Error response. `isError` is set so MCP clients can distinguish a failed call
- * from a successful scan that found nothing — the difference between "you are
- * secure" and "I could not look".
+ * Error response. `isError` lets clients tell a failed call apart from a scan
+ * that ran and found nothing.
  */
 export function errorResponse(message: string, hint?: string): ToolResponse {
   return {
@@ -46,7 +45,7 @@ export function pathArgument(description: string) {
 
 /**
  * Wraps a handler so no exception escapes as a protocol-level failure and no
- * internal detail (stack traces, absolute host paths) leaks to the client.
+ * stack trace or absolute host path reaches the client.
  */
 export async function runTool(
   toolName: string,
@@ -67,10 +66,7 @@ export async function runTool(
   }
 }
 
-/**
- * Validates a path argument, throwing PathValidationError which runTool converts
- * into a clean client-facing error.
- */
+/** Validates a path argument. Throws PathValidationError, which runTool converts into a client-facing error. */
 export function requirePath(
   input: string,
   kind: "file" | "directory" | "any",

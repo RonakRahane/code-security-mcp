@@ -1,0 +1,747 @@
+# Sentinel core application-security rules.
+#
+# These rules deliberately focus on high-confidence source-to-sink flows and
+# unsafe APIs. They are intended to complement, not replace, provider-specific
+# secret detection and dependency scanning.
+
+rules:
+  - id: sentinel.core.javascript.sql-injection.dynamic-query
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      Untrusted HTTP input reaches a dynamically constructed SQL query. Use a
+      parameterized query API and keep user input out of the SQL string.
+    metadata:
+      category: security
+      cwe: CWE-89
+      sentinel:
+        category: injection
+        severity: critical
+        confidence: high
+      remediation: >-
+        Use a parameterized query and keep user input out of the SQL string:
+        db.query('SELECT * FROM users WHERE id = $1', [id]).
+    mode: taint
+    pattern-sources:
+      # $REQ is constrained to request-like names. Unconstrained, "$REQ.query"
+      # matches any ".query" expression -- including "db.query" -- so a database
+      # handle became its own taint source and flagged safe static queries.
+      - patterns:
+          - pattern-either:
+              - pattern: $REQ.body
+              - pattern: $REQ.query
+              - pattern: $REQ.params
+          - metavariable-regex:
+              metavariable: $REQ
+              regex: ^(req|request|ctx|context|httpRequest|incoming|_req)$
+    pattern-sinks:
+      - pattern-either:
+          - pattern: $DB.query(`...`)
+          - pattern: $DB.execute(`...`)
+          - pattern: $DB.raw(`...`)
+          - pattern: $DB.query($LEFT + $RIGHT)
+          - pattern: $DB.execute($LEFT + $RIGHT)
+          - pattern: $DB.raw($LEFT + $RIGHT)
+          - pattern: $DB.$queryRawUnsafe($QUERY)
+          # Single-argument forms, for a query assembled into a variable before
+          # the call. Taint mode reports these only when the argument carries
+          # untrusted data, and a parameterised call passes its values as a
+          # second argument, so it does not match here.
+          - pattern: $DB.query($ARG)
+          - pattern: $DB.execute($ARG)
+          - pattern: $DB.raw($ARG)
+
+  - id: sentinel.core.python.sql-injection.dynamic-query
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Untrusted HTTP input reaches a dynamically constructed SQL query. Use
+      parameter binding instead of f-strings, percent formatting, or format().
+    metadata:
+      category: security
+      cwe: CWE-89
+      sentinel:
+        category: injection
+        severity: critical
+        confidence: high
+      remediation: >-
+        Use parameter binding and keep user input out of the SQL string:
+        cursor.execute('SELECT * FROM users WHERE id = %s', (user_id,)).
+    mode: taint
+    pattern-sources:
+      - pattern-either:
+          - pattern: request.args.get(...)
+          - pattern: request.form.get(...)
+          - pattern: request.json
+          - pattern: request.get_json(...)
+    pattern-sinks:
+      - pattern-either:
+          - pattern: $CURSOR.execute(f"...")
+          - pattern: $CURSOR.execute(f'...')
+          - pattern: $CURSOR.execute($QUERY % $VALUE)
+          - pattern: $CURSOR.execute($QUERY.format(...))
+
+  - id: sentinel.core.javascript.command-injection.exec
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      Untrusted HTTP input reaches a shell command. Do not pass user-controlled
+      data to exec/execSync; use a fixed command with validated argument arrays.
+    metadata:
+      category: security
+      cwe: CWE-78
+      sentinel:
+        category: injection
+        severity: critical
+        confidence: high
+      remediation: >-
+        Use execFile() or spawn() with an argument array so no shell is involved.
+        If a shell is unavoidable, validate the input against a strict allowlist.
+    mode: taint
+    pattern-sources:
+      # $REQ is constrained to request-like names. Unconstrained, "$REQ.query"
+      # matches any ".query" expression -- including "db.query" -- so a database
+      # handle became its own taint source and flagged safe static queries.
+      - patterns:
+          - pattern-either:
+              - pattern: $REQ.body
+              - pattern: $REQ.query
+              - pattern: $REQ.params
+          - metavariable-regex:
+              metavariable: $REQ
+              regex: ^(req|request|ctx|context|httpRequest|incoming|_req)$
+    pattern-sinks:
+      - pattern-either:
+          - pattern: exec($COMMAND, ...)
+          - pattern: execSync($COMMAND, ...)
+          - pattern: $CHILD_PROCESS.exec($COMMAND, ...)
+          - pattern: $CHILD_PROCESS.execSync($COMMAND, ...)
+
+  - id: sentinel.core.python.command-injection.shell
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Untrusted HTTP input reaches a shell-execution API. Use a fixed command
+      and an argument list with shell disabled.
+    metadata:
+      category: security
+      cwe: CWE-78
+      sentinel:
+        category: injection
+        severity: critical
+        confidence: high
+      remediation: >-
+        Use subprocess.run() with an argument list and shell=False. If a shell is
+        unavoidable, quote with shlex.quote().
+    mode: taint
+    pattern-sources:
+      - pattern-either:
+          - pattern: request.args.get(...)
+          - pattern: request.form.get(...)
+          - pattern: request.json
+          - pattern: request.get_json(...)
+    pattern-sinks:
+      - pattern-either:
+          - pattern: os.system($COMMAND)
+          - pattern: os.popen($COMMAND)
+          - pattern: subprocess.run($COMMAND, ..., shell=True, ...)
+          - pattern: subprocess.call($COMMAND, ..., shell=True, ...)
+          - pattern: subprocess.Popen($COMMAND, ..., shell=True, ...)
+
+  - id: sentinel.core.javascript.dom-xss.innerhtml
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      Untrusted HTTP input reaches an HTML interpretation sink. Prefer
+      textContent or sanitize trusted HTML with a well-maintained sanitizer.
+    metadata:
+      category: security
+      cwe: CWE-79
+      sentinel:
+        category: xss
+        severity: high
+        confidence: high
+      remediation: >-
+        Assign through textContent, which escapes automatically. If HTML is
+        genuinely required, sanitize with DOMPurify first.
+    mode: taint
+    pattern-sources:
+      - pattern-either:
+          - patterns:
+              - pattern-either:
+                  - pattern: $REQ.body
+                  - pattern: $REQ.query
+                  - pattern: $REQ.params
+              - metavariable-regex:
+                  metavariable: $REQ
+                  regex: ^(req|request|ctx|context|httpRequest|incoming|_req)$
+          - pattern: window.location
+          - pattern: document.location
+          - pattern: location.hash
+          - pattern: location.search
+    pattern-sinks:
+      - pattern-either:
+          - pattern: $ELEMENT.innerHTML = $VALUE
+          # += is the same sink and was not covered.
+          - pattern: $ELEMENT.innerHTML += $VALUE
+          - pattern: $ELEMENT.outerHTML = $VALUE
+          - pattern: document.write($VALUE)
+          # Reflected XSS: the response writers had no sink at all, so untrusted
+          # input echoed straight back to the client went unreported.
+          - pattern: $RES.send($VALUE)
+          - pattern: $RES.write($VALUE)
+          - pattern: $RES.end($VALUE)
+
+  - id: sentinel.core.javascript.path-traversal.filesystem
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      Untrusted HTTP input reaches a file-system path sink. Resolve the path
+      against a fixed base directory and verify that it remains inside it.
+    metadata:
+      category: security
+      cwe: CWE-22
+      sentinel:
+        category: path-traversal
+        severity: high
+        confidence: high
+      remediation: >-
+        Resolve the path against a fixed base directory and confirm the result
+        still starts with that base before opening it.
+    mode: taint
+    pattern-sources:
+      # $REQ is constrained to request-like names. Unconstrained, "$REQ.query"
+      # matches any ".query" expression -- including "db.query" -- so a database
+      # handle became its own taint source and flagged safe static queries.
+      - patterns:
+          - pattern-either:
+              - pattern: $REQ.body
+              - pattern: $REQ.query
+              - pattern: $REQ.params
+          - metavariable-regex:
+              metavariable: $REQ
+              regex: ^(req|request|ctx|context|httpRequest|incoming|_req)$
+    pattern-sinks:
+      - pattern-either:
+          - pattern: fs.readFile($PATH, ...)
+          - pattern: fs.readFileSync($PATH, ...)
+          - pattern: fs.writeFile($PATH, ...)
+          - pattern: fs.writeFileSync($PATH, ...)
+          # sendFile with a fixed `root` is the documented safe form: Express
+          # resolves against it and rejects anything that escapes. Matching it
+          # reported this rule's own remediation as the vulnerability.
+          - patterns:
+              - pattern: $RESPONSE.sendFile($PATH, ...)
+              - pattern-not: "$RESPONSE.sendFile($PATH, {..., root: ...}, ...)"
+
+  - id: sentinel.core.python.ssti.render-template-string
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Untrusted HTTP input reaches Flask's render_template_string(). Render a
+      fixed template and pass untrusted values as template data instead.
+    metadata:
+      category: security
+      cwe: CWE-1336
+      sentinel:
+        category: injection
+        severity: high
+        confidence: high
+      remediation: >-
+        Use render_template() with a template file. Rendering a user-controlled
+        string allows server-side template injection and remote code execution.
+    mode: taint
+    pattern-sources:
+      - pattern-either:
+          - pattern: request.args.get(...)
+          - pattern: request.form.get(...)
+          - pattern: request.json
+          - pattern: request.get_json(...)
+    pattern-sinks:
+      - pattern: render_template_string($TEMPLATE, ...)
+
+  - id: sentinel.core.python.unsafe-pickle-deserialization
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Untrusted HTTP input is deserialized with pickle. Pickle can execute
+      arbitrary code; use a data-only format such as JSON for untrusted input.
+    metadata:
+      category: security
+      cwe: CWE-502
+      sentinel:
+        category: injection
+        severity: critical
+        confidence: high
+      remediation: >-
+        Use JSON or another data-only format. pickle executes arbitrary code while
+        loading and is never safe on untrusted input.
+    mode: taint
+    pattern-sources:
+      - pattern-either:
+          - pattern: request.data
+          - pattern: request.get_data(...)
+          - pattern: request.files
+    pattern-sinks:
+      - pattern: pickle.loads($DATA)
+
+  - id: sentinel.core.python.unsafe-yaml-loader
+    languages: [python]
+    severity: ERROR
+    message: >-
+      yaml.load() is used with an unsafe loader. Parse untrusted YAML with
+      yaml.safe_load() instead.
+    metadata:
+      category: security
+      cwe: CWE-502
+      sentinel:
+        category: injection
+        severity: high
+        confidence: high
+      remediation: >-
+        Use yaml.safe_load(), or yaml.load(data, Loader=yaml.SafeLoader). The
+        default loader constructs arbitrary Python objects.
+    pattern-either:
+      - pattern: yaml.load($DATA)
+      - pattern: yaml.load($DATA, Loader=yaml.Loader)
+      - pattern: yaml.load($DATA, Loader=yaml.UnsafeLoader)
+
+  - id: sentinel.core.javascript.eval-untrusted-input
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      Untrusted HTTP input reaches eval or the Function constructor. Do not
+      execute dynamic code; parse and validate structured data instead.
+    metadata:
+      category: security
+      cwe: CWE-95
+      sentinel:
+        category: injection
+        severity: critical
+        confidence: high
+      remediation: >-
+        Remove eval(). Use JSON.parse() for data, or a sandboxed expression
+        evaluator if expressions must be supported.
+    mode: taint
+    pattern-sources:
+      # $REQ is constrained to request-like names. Unconstrained, "$REQ.query"
+      # matches any ".query" expression -- including "db.query" -- so a database
+      # handle became its own taint source and flagged safe static queries.
+      - patterns:
+          - pattern-either:
+              - pattern: $REQ.body
+              - pattern: $REQ.query
+              - pattern: $REQ.params
+          - metavariable-regex:
+              metavariable: $REQ
+              regex: ^(req|request|ctx|context|httpRequest|incoming|_req)$
+    pattern-sinks:
+      - pattern-either:
+          - pattern: eval($CODE)
+          - pattern: new Function($CODE)
+
+  - id: sentinel.core.javascript.xss.innerHTML-direct
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: Assigning variables directly to innerHTML is an XSS hazard.
+    metadata:
+      category: security
+      cwe: CWE-79
+      sentinel:
+        category: xss
+        severity: high
+        confidence: high
+      remediation: >-
+        Assign through textContent instead. If HTML is required, sanitize the
+        value with DOMPurify before assigning.
+    patterns:
+      - pattern: $ELEMENT.innerHTML = $VALUE
+      # Sanitising before assigning is the documented fix. Flagging it tells a
+      # developer their correct code is wrong, which is the fastest way to have
+      # the whole tool ignored.
+      - pattern-not: $ELEMENT.innerHTML = DOMPurify.sanitize(...)
+      - pattern-not: $ELEMENT.innerHTML = $D.sanitize(...)
+      - pattern-not: $ELEMENT.innerHTML = sanitizeHtml(...)
+      - pattern-not: $ELEMENT.innerHTML = $SANITIZER.sanitizeHtml(...)
+      - pattern-not: $ELEMENT.innerHTML = escapeHtml(...)
+      - pattern-not: $ELEMENT.innerHTML = $E.escapeHtml(...)
+      - pattern-not: $ELEMENT.innerHTML += DOMPurify.sanitize(...)
+      - pattern-not: $ELEMENT.innerHTML += $D.sanitize(...)
+      - pattern-not: $ELEMENT.innerHTML += sanitizeHtml(...)
+      - pattern-not: $ELEMENT.innerHTML += escapeHtml(...)
+      # A string literal is author-controlled, not user input.
+      - pattern-not: $ELEMENT.innerHTML = "..."
+      - pattern-not: $ELEMENT.innerHTML = ''
+
+  - id: sentinel.core.javascript.ssrf.untrusted-url
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      Untrusted HTTP input controls the destination of an outbound request.
+      An attacker can reach internal services, cloud metadata endpoints, and
+      anything else the server can route to.
+    metadata:
+      category: security
+      cwe: CWE-918
+      sentinel:
+        category: injection
+        severity: high
+        confidence: high
+      remediation: >-
+        Validate the URL against an allowlist of permitted hosts and schemes
+        before requesting it, resolve the hostname and reject private and
+        link-local ranges, and disable redirect following.
+    mode: taint
+    pattern-sources:
+      - patterns:
+          - pattern-either:
+              - pattern: $REQ.body
+              - pattern: $REQ.query
+              - pattern: $REQ.params
+          - metavariable-regex:
+              metavariable: $REQ
+              regex: ^(req|request|ctx|context|httpRequest|incoming|_req)$
+    pattern-sinks:
+      - pattern-either:
+          - pattern: fetch(...)
+          - pattern: axios(...)
+          - pattern: axios.$METHOD(...)
+          - pattern: got(...)
+          - pattern: superagent.$METHOD(...)
+          - pattern: http.get(...)
+          - pattern: http.request(...)
+          - pattern: https.get(...)
+          - pattern: https.request(...)
+
+  - id: sentinel.core.python.ssrf.untrusted-url
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Untrusted HTTP input controls the destination of an outbound request.
+      An attacker can reach internal services and cloud metadata endpoints.
+    metadata:
+      category: security
+      cwe: CWE-918
+      sentinel:
+        category: injection
+        severity: high
+        confidence: high
+      remediation: >-
+        Validate the URL against an allowlist of permitted hosts and schemes,
+        resolve the hostname and reject private ranges, and disable redirects.
+    mode: taint
+    pattern-sources:
+      - pattern-either:
+          - pattern: flask.request.args
+          - pattern: flask.request.form
+          - pattern: flask.request.json
+          - pattern: request.args
+          - pattern: request.form
+          - pattern: request.json
+          - pattern: request.GET
+          - pattern: request.POST
+    pattern-sinks:
+      - pattern-either:
+          - pattern: requests.get(...)
+          - pattern: requests.post(...)
+          - pattern: requests.request(...)
+          - pattern: urllib.request.urlopen(...)
+          - pattern: urlopen(...)
+          - pattern: httpx.get(...)
+          - pattern: httpx.post(...)
+
+  - id: sentinel.core.python.xxe.minidom
+    languages: [python]
+    severity: WARNING
+    message: >-
+      xml.dom.minidom does not defend against entity expansion or external
+      entity resolution, so untrusted XML can read local files or exhaust
+      memory.
+    metadata:
+      category: security
+      cwe: CWE-611
+      sentinel:
+        category: injection
+        severity: medium
+        confidence: high
+      remediation: >-
+        Use defusedxml.minidom, which rejects entity declarations and is a
+        drop-in replacement.
+    patterns:
+      - pattern-either:
+          - pattern: xml.dom.minidom.parse(...)
+          - pattern: xml.dom.minidom.parseString(...)
+          - patterns:
+              - pattern-either:
+                  - pattern: minidom.parse(...)
+                  - pattern: minidom.parseString(...)
+              # Only the standard library module is unsafe. defusedxml exposes
+              # the same names and is the recommended replacement.
+              - pattern-inside: |
+                  from xml.dom import minidom
+                  ...
+
+  - id: sentinel.core.java.xxe.unsafe-document-builder
+    languages: [java]
+    severity: WARNING
+    message: >-
+      DocumentBuilderFactory resolves external entities unless told not to, so
+      untrusted XML can read local files or reach internal services.
+    metadata:
+      category: security
+      cwe: CWE-611
+      sentinel:
+        category: injection
+        severity: medium
+        confidence: high
+      remediation: >-
+        Call setFeature("http://apache.org/xml/features/disallow-doctype-decl",
+        true) on the factory before parsing untrusted XML.
+    patterns:
+      - pattern: $F = javax.xml.parsers.DocumentBuilderFactory.newInstance();
+      # Hardening is the documented fix, and it happens on a later line. A
+      # line-local rule reported it as vulnerable anyway, which is the same
+      # mistake as flagging a sanitiser call.
+      - pattern-not-inside: |
+          $F = javax.xml.parsers.DocumentBuilderFactory.newInstance();
+          ...
+          $F.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+      - pattern-not-inside: |
+          $F = javax.xml.parsers.DocumentBuilderFactory.newInstance();
+          ...
+          $F.setFeature(javax.xml.XMLConstants.FEATURE_SECURE_PROCESSING, true);
+
+  - id: sentinel.core.python.crypto.md5
+    languages: [python]
+    severity: ERROR
+    message: MD5 is cryptographically broken.
+    metadata:
+      category: security
+      cwe: CWE-327
+      sentinel:
+        category: crypto
+        severity: high
+        confidence: high
+      remediation: >-
+        Use hashlib.sha256() for integrity. For passwords use bcrypt or argon2
+        through passlib; MD5 is broken for both.
+    pattern: hashlib.md5(...)
+
+  - id: sentinel.core.python.crypto.sha1
+    languages: [python]
+    severity: ERROR
+    message: SHA-1 is cryptographically broken.
+    metadata:
+      category: security
+      cwe: CWE-327
+      sentinel:
+        category: crypto
+        severity: medium
+        confidence: high
+      remediation: >-
+        Use hashlib.sha256() or SHA-3. SHA-1 is broken for collision resistance
+        and unsuitable for signatures or integrity.
+    pattern: hashlib.sha1(...)
+
+  - id: sentinel.core.javascript.crypto.math-random
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: Math.random() is not secure.
+    metadata:
+      category: security
+      cwe: CWE-338
+      sentinel:
+        category: crypto
+        severity: medium
+        confidence: high
+      remediation: >-
+        Use crypto.randomBytes() or crypto.randomUUID(). Math.random() is
+        predictable and must never generate tokens, keys, or identifiers.
+    pattern: Math.random(...)
+
+  - id: sentinel.core.javascript.auth.bcrypt-low-rounds
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: bcrypt with low salt rounds.
+    metadata:
+      category: security
+      cwe: CWE-916
+      sentinel:
+        category: auth
+        severity: medium
+        confidence: high
+      remediation: >-
+        Raise the bcrypt cost factor to at least 12. Benchmark on production
+        hardware and target roughly 250ms per hash.
+    patterns:
+      - pattern-either:
+          - pattern: bcrypt.hash($PASS, $ROUNDS)
+          - pattern: bcrypt.hashSync($PASS, $ROUNDS)
+      # 12 is the value the remediation asks for, so an unbounded match
+      # reported the fix as the defect.
+      - metavariable-comparison:
+          metavariable: $ROUNDS
+          comparison: $ROUNDS < 12
+
+  - id: sentinel.core.javascript.auth.jwt-decode
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: jwt.decode() bypasses signature verification.
+    metadata:
+      category: security
+      cwe: CWE-347
+      sentinel:
+        category: auth
+        severity: medium
+        confidence: high
+      remediation: >-
+        Use jwt.verify() with the signing secret and an explicit algorithms list.
+        jwt.decode() performs no signature check, so any token is accepted.
+    pattern: jwt.decode(...)
+
+  - id: sentinel.core.python.auth.jwt-no-verify
+    languages: [python]
+    severity: ERROR
+    message: jwt.decode with verification disabled.
+    metadata:
+      category: security
+      cwe: CWE-347
+      sentinel:
+        category: auth
+        severity: high
+        confidence: high
+      remediation: >-
+        Remove verify_signature=False and pass the key with an explicit algorithms
+        list. Without verification any forged token is accepted.
+    pattern: jwt.decode(..., verify_signature=False, ...)
+
+  - id: sentinel.core.python.auth.assert-used
+    languages: [python]
+    severity: WARNING
+    message: Assert used for security check. Assert is stripped in optimized mode.
+    metadata:
+      category: security
+      cwe: CWE-20
+      sentinel:
+        category: auth
+        severity: medium
+        confidence: high
+      remediation: >-
+        Replace assert with an explicit check that raises. Python removes assert
+        statements when run with -O, so the check disappears in production.
+    patterns:
+      - pattern: assert $X
+      # Only assertions guarding a security decision. Unconstrained, every
+      # assertion in a test suite was reported at medium severity.
+      - metavariable-regex:
+          metavariable: $X
+          regex: (request\.|user\.|is_admin|is_authenticated|has_perm|current_user|\.role|permission)
+
+  - id: sentinel.core.python.misconfig.flask-debug
+    languages: [python]
+    severity: WARNING
+    message: Flask debug mode in production.
+    metadata:
+      category: security
+      cwe: CWE-489
+      sentinel:
+        category: auth
+        severity: medium
+        confidence: high
+      remediation: >-
+        Set debug from the environment and default it to False. The Flask debugger
+        exposes an interactive console that executes arbitrary code.
+    pattern: $APP.run(..., debug=True, ...)
+
+  - id: sentinel.core.python.misconfig.django-debug
+    languages: [python]
+    severity: WARNING
+    message: Django debug setting enabled.
+    metadata:
+      category: security
+      cwe: CWE-489
+      sentinel:
+        category: auth
+        severity: medium
+        confidence: high
+      remediation: >-
+        Set DEBUG from the environment and default it to False. Debug mode exposes
+        settings, source, and stack traces.
+    pattern: DEBUG = True
+
+  - id: sentinel.core.python.misconfig.django-hosts
+    languages: [python]
+    severity: WARNING
+    message: Django wildcard hosts.
+    metadata:
+      category: security
+      cwe: CWE-668
+      sentinel:
+        category: auth
+        severity: medium
+        confidence: high
+      remediation: >-
+        List the exact hostnames you serve. ALLOWED_HOSTS = ['*'] permits Host
+        header attacks and cache poisoning.
+    pattern: ALLOWED_HOSTS = ['*']
+
+  - id: sentinel.core.python.path-traversal.send-file
+    languages: [python]
+    severity: ERROR
+    message: Path traversal risk in Flask send_file.
+    metadata:
+      category: security
+      cwe: CWE-22
+      sentinel:
+        category: path-traversal
+        severity: high
+        confidence: high
+      remediation: >-
+        Use send_from_directory() with a fixed directory, or validate the resolved
+        path stays within the intended base.
+    pattern: send_file(...)
+
+  - id: sentinel.core.python.path-traversal.open
+    languages: [python]
+    severity: ERROR
+    message: Path traversal risk in Python open().
+    metadata:
+      category: security
+      cwe: CWE-22
+      sentinel:
+        category: path-traversal
+        severity: high
+        confidence: high
+      remediation: >-
+        Resolve the path with os.path.realpath() and confirm it stays inside the
+        intended base directory before opening it.
+    patterns:
+      - pattern: open(...)
+      # A literal path is author-controlled, and realpath followed by a
+      # containment check is the fix this rule recommends. Matching every
+      # open() call reported both as path traversal.
+      - pattern-not: open("...", ...)
+      - pattern-not: open(os.path.realpath(...), ...)
+      - pattern-not: open($P, ...)
+      - pattern-either:
+          - pattern: open(request.$X, ...)
+          - pattern: open(flask.request.$X, ...)
+          - pattern: open(os.path.join(..., request.$X, ...), ...)
+          - pattern: open(os.path.join(..., flask.request.$X, ...), ...)
+          - pattern: open($BASE + request.$X, ...)
+
+  - id: sentinel.core.python.crypto.weak-random
+    languages: [python]
+    severity: WARNING
+    message: Use of weak random number generator.
+    metadata:
+      category: security
+      cwe: CWE-338
+      sentinel:
+        category: crypto
+        severity: medium
+        confidence: high
+      remediation: >-
+        Use the secrets module (secrets.token_urlsafe, secrets.choice). random is
+        deterministic and must not generate tokens or passwords.
+    pattern: random.randint(...)
