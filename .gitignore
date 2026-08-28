@@ -1,46 +1,43 @@
-# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
-
-# dependencies
-/node_modules
-/.pnp
+# Dependencies
+node_modules/
+.pnp
 .pnp.*
-.yarn/*
-!.yarn/patches
-!.yarn/plugins
-!.yarn/releases
-!.yarn/versions
 
-# testing
-/coverage
+# Build output
+dist/
+*.tsbuildinfo
 
-# next.js
-/.next/
-/out/
+# Test and coverage output
+coverage/
+.nyc_output/
 
-# production
-/build
+# Environment files. Never commit real credentials.
+# .env.example is checked in as documentation.
+.env
+.env.*
+!.env.example
 
-# misc
-.DS_Store
+# Generated Sentinel reports. Scoped to the generated filenames so that a
+# blanket *.md rule does not also exclude README.md and docs/.
+sentinel-report.md
+sentinel-report.html
+sentinel-report.sarif
+sentinel.sarif
+*.sentinel.bak
+
+# Keys and certificates
 *.pem
+*.key
 
-# debug
+# Logs
+*.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
-.env*
-
-# vercel
-.vercel
-
-# typescript
-*.tsbuildinfo
-next-env.d.ts
-*.md
-*.pdf
-*.txt
-*.html
-/dist
+# OS and editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

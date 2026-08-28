@@ -1,0 +1,29 @@
+{
+  "$comment": "Copy to sentinel.config.json and adjust. Every field is optional; see README.md for the full reference.",
+
+  "ignorePaths": [
+    "dist",
+    "coverage",
+    "generated",
+    "**/*.generated.ts"
+  ],
+
+  "ignoreRules": [],
+
+  "minimumSeverity": "low",
+  "failOnSeverity": "high",
+
+  "maxFiles": 25000,
+  "concurrency": 16,
+
+  "$comment_offline": "Set true for air-gapped runs. Disables OSV advisory lookups; the scan reports that dependency results are incomplete rather than returning an empty list.",
+  "offline": false,
+
+  "semgrep": {
+    "enabled": true,
+    "timeoutMs": 120000,
+
+    "$comment_registry": "Registry packs are downloaded at scan time, so enabling them makes results depend on network access and on the registry's current contents. Leave empty for reproducible, offline-capable scans. Example: [\"p/javascript\", \"p/python\"]",
+    "registryRulesets": []
+  }
+}

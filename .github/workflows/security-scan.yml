@@ -1,0 +1,125 @@
+name: Sentinel Security Scan
+
+on:
+  pull_request:
+    branches: [main, master, develop]
+  push:
+    branches: [main, master]
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      # Actions are pinned to full commit SHAs. A tag is mutable: whoever
+      # controls the action repository can repoint v4 at different code, which
+      # would then run with this workflow's token and its security-events write
+      # permission.
+      - name: Checkout code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Build Sentinel
+        run: |
+          npm ci
+          npm run build
+
+      # Semgrep adds cross-file taint analysis. It is optional: without it the
+      # scan falls back to the built-in pattern engine and says so in its output.
+      - name: Install Semgrep
+        run: pipx install semgrep
+        continue-on-error: true
+
+      # The scan runs through the CLI rather than an inline script, so CI
+      # exercises the same code path as a developer's local run. Exit code 1
+      # means "findings at or above the configured threshold"; 2 means the scan
+      # itself failed, which must not be confused with a clean result.
+      # The scan reads sentinel.config.json from the checkout, and on a pull
+      # request that checkout contains the author's version of it. A pull
+      # request adding {"ignorePaths": ["**"]} turns a failing gate into a
+      # passing one, so a change to the policy has to be reviewed by a person
+      # rather than applied to the run that is meant to police it.
+      - name: Refuse a scan policy supplied by the pull request
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin "$BASE_SHA" "$HEAD_SHA" 2>/dev/null || true
+          CHANGED=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA" -- \
+            sentinel.config.json .sentinelrc.json .sentinelignore .sentinel-baseline.json || true)
+          if [ -n "$CHANGED" ]; then
+            echo "This pull request changes the scan policy:"
+            echo "$CHANGED"
+            echo
+            echo "Policy changes are not applied to the scan that checks them."
+            echo "Review the change and merge it separately."
+            exit 1
+          fi
+
+      - name: Run Sentinel scan
+        id: scan
+        run: |
+          set +e
+          node dist/index.js --scan . --sarif sentinel.sarif --no-report-file > scan-report.md
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+          set -e
+          cat scan-report.md
+
+      - name: Upload SARIF to code scanning
+        if: always() && hashFiles('sentinel.sarif') != ''
+        uses: github/codeql-action/upload-sarif@4187e74d05793876e9989daffde9c3e66b4acd07 # v3
+        with:
+          sarif_file: sentinel.sarif
+          category: sentinel
+
+      - name: Attach scan report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sentinel-report
+          path: |
+            scan-report.md
+            sentinel.sarif
+          retention-days: 14
+
+      - name: Comment on pull request
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        with:
+          script: |
+            const fs = require('fs');
+            const report = fs.readFileSync('scan-report.md', 'utf-8');
+            const body = report.length > 60000
+              ? `${report.slice(0, 60000)}\n\n_Report truncated. See the workflow artifact for the full output._`
+              : report;
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body,
+            });
+
+      - name: Enforce severity threshold
+        run: |
+          EXIT_CODE="${{ steps.scan.outputs.exit_code }}"
+          if [ "$EXIT_CODE" = "2" ]; then
+            echo "The scan failed to run. This is not a clean result, investigate before merging."
+            exit 1
+          fi
+          if [ "$EXIT_CODE" = "1" ]; then
+            echo "Findings reached the failOnSeverity threshold configured in sentinel.config.json."
+            exit 1
+          fi
+          echo "No findings reached the configured failure threshold."

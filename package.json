@@ -1,25 +1,47 @@
 {
   "name": "sentinel-mcp",
-  "version": "2.0.0",
-  "description": "Security Agent MCP — scans code for vulnerabilities, reviews PRs, detects secrets, auto-fixes issues. Works with Claude, ChatGPT, Cursor, Ollama, and any MCP client.",
+  "version": "2.1.0",
+  "description": "MCP server for code security: SAST, secret detection, dependency auditing, PR review, and SARIF export.",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
     "sentinel-mcp": "./dist/index.js"
   },
+  "files": [
+    "dist",
+    "rules",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "scripts": {
     "build": "tsc",
+    "prepack": "npm run build",
     "dev": "tsx src/index.ts",
     "start": "node dist/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "typecheck": "tsc --noEmit",
+    "verify": "npm run typecheck && npm run test",
     "inspect": "npx @modelcontextprotocol/inspector node dist/index.js",
     "dashboard": "node dist/dashboard/generate-report.js",
-    "benchmark": "npm run build && node dist/reporting/benchmark-runner.js ./test ./test/ground-truth.json"
+    "benchmark": "npm run build && node dist/reporting/benchmark-runner.js ./test/fixtures ./test/fixtures/ground-truth.json",
+    "prepublishOnly": "npm run verify",
+    "benchmark:cve": "npm run build && node scripts/cve-benchmark-run.mjs",
+    "audit:features": "node scripts/feature-audit.mjs"
   },
   "keywords": [
     "mcp",
     "security",
     "code-review",
     "vulnerability-scanner",
+    "sast",
+    "secret-detection",
+    "sca",
+    "sarif",
     "claude",
     "chatgpt",
     "ollama"
@@ -37,7 +59,12 @@
   "devDependencies": {
     "@types/babel__traverse": "^7.28.0",
     "@types/node": "^22.0.0",
+    "@vitest/coverage-v8": "^3.2.7",
     "tsx": "^4.19.0",
-    "typescript": "^5.5.0"
+    "typescript": "^5.5.0",
+    "vitest": "^3.2.7"
+  },
+  "overrides": {
+    "esbuild": "^0.28.2"
   }
 }

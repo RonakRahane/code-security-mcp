@@ -1,4 +1,4 @@
-// ─── Severity & Category Types ───────────────────────────────────────────────
+// Severity & Category Types
 
 export type Severity = "critical" | "high" | "medium" | "low" | "info";
 
@@ -16,51 +16,51 @@ export type Category =
   | "prototype-pollution"
   | "miscellaneous";
 
-// ─── Security Pattern Definition ─────────────────────────────────────────────
+// Security Pattern Definition
 
 export interface SecurityPattern {
-  /** Unique rule identifier, e.g., "SQL_INJECTION_CONCAT" */
+  /** Unique rule identifier, for example "SQL_INJECTION_CONCAT". */
   id: string;
-  /** Regex pattern to match against each line of code */
+  /** Matched against each line of code. */
   regex: RegExp;
-  /** Severity level of this finding */
   severity: Severity;
-  /** Category grouping */
   category: Category;
-  /** CWE identifier, e.g., "CWE-89" */
+  /** CWE identifier, for example "CWE-89". */
   cweId: string;
-  /** Human-readable description of the issue */
   message: string;
-  /** Suggested fix */
   remediation: string;
-  /** Languages this pattern applies to. Use "*" for all languages */
+  /** Languages this pattern applies to. "*" matches every language. */
   languages: string[];
+  /**
+   * Which view of a source line the pattern is matched against.
+   *
+   * - `"masked"` (default): string and comment contents are blanked first, so
+   *   the rule fires only on executable code. Keeps a code sample in a
+   *   docstring from being reported as a vulnerability.
+   * - `"literal"`: only comments are blanked. Needed by rules whose evidence
+   *   lives inside a literal, such as the algorithm name in `createHash("md5")`
+   *   or the `"*"` in `ALLOWED_HOSTS = ["*"]`, which masking would erase.
+   */
+  matchScope?: "masked" | "literal";
 }
 
-// ─── Scan Finding (result of a pattern match) ────────────────────────────────
+// Scan Finding (result of a pattern match)
 
 export interface Finding {
-  /** Rule that triggered this finding */
   ruleId: string;
-  /** Severity */
   severity: Severity;
-  /** Category */
   category: Category;
-  /** CWE identifier */
   cweId: string;
-  /** Description */
   message: string;
-  /** File where the finding was detected */
   filePath: string;
-  /** Line number (1-indexed) */
+  /** 1-indexed. */
   line: number;
-  /** Content of the matching line (trimmed) */
+  /** Matching line, trimmed and redacted where the rule matched a secret. */
   lineContent: string;
-  /** Suggested remediation */
   remediation: string;
-  /** Confidence level based on contextual indicators */
+  /** Derived from contextual indicators on the matched line. */
   confidence?: "high" | "medium" | "low";
-  /** Scanner that produced this result. Kept optional for backwards compatibility. */
+  /** Engine that produced this result. Optional for backwards compatibility. */
   source?: "semgrep" | "compatibility" | "secret-detector" | "iac-detector";
   /** Stable, non-secret identifier used by baseline mode and deduplication. */
   fingerprint?: string;
@@ -68,7 +68,7 @@ export interface Finding {
   metadata?: Record<string, string | number | boolean>;
 }
 
-// ─── Scan Result (aggregate for a file) ──────────────────────────────────────
+// Scan Result (aggregate for a file)
 
 export interface ScanResult {
   filePath: string;
@@ -76,6 +76,11 @@ export interface ScanResult {
   totalFindings: number;
   findings: Finding[];
   summary: SeveritySummary;
+  /**
+   * False when no rules applied to the file, so zero findings means "not
+   * examined" rather than "clean". Callers aggregate this into coverage.
+   */
+  analyzed: boolean;
 }
 
 export interface SeveritySummary {
@@ -86,7 +91,7 @@ export interface SeveritySummary {
   info: number;
 }
 
-// ─── Dependency Vulnerability ────────────────────────────────────────────────
+// Dependency Vulnerability
 
 export interface DependencyVulnerability {
   package: string;
@@ -107,13 +112,27 @@ export interface DependencyVulnerability {
   fingerprint?: string;
 }
 
-export type ScanEngine = "semgrep" | "compatibility";
+export type ScanEngine = "semgrep" | "compatibility" | "hybrid";
 
 export interface ScanEngineStatus {
   engine: ScanEngine;
   available: boolean;
   used: boolean;
+  /**
+   * True when Semgrep was switched off deliberately, rather than being
+   * missing. A pattern-only scan is a gap either way, but only one of the two
+   * is a decision the operator made, and the CLI verdict distinguishes them.
+   */
+  disabled?: boolean;
   message?: string;
+  /**
+   * Files Semgrep analysed, per its own reporting. It applies built-in ignore
+   * rules and skips files it cannot parse, so this differs from the number of
+   * files it was asked to scan.
+   */
+  filesAnalyzedBySemgrep?: number;
+  /** Files the built-in pattern engine covered, including Semgrep's gaps. */
+  filesAnalyzedByPatternEngine?: number;
 }
 
 export interface ProjectScanSummary {
@@ -122,6 +141,21 @@ export interface ProjectScanSummary {
   medium: number;
   low: number;
   info: number;
+}
+
+export interface ScanCoverage {
+  /** Files read and analysed. */
+  filesScanned: number;
+  /** Files deliberately excluded (ignore rules, binaries, size caps). */
+  filesSkipped: number;
+  /** Files that could not be read. Non-zero means results are incomplete. */
+  filesUnreadable: number;
+  /** True when the file cap was reached before the tree was fully enumerated. */
+  truncated: boolean;
+  /** Wall-clock duration of the scan. */
+  durationMs: number;
+  /** Files that received no static-analysis pass. Anything above zero is a coverage hole. */
+  filesWithoutStaticAnalysis?: number;
 }
 
 export interface ProjectSecurityScan {
@@ -134,6 +168,8 @@ export interface ProjectSecurityScan {
   summary: ProjectScanSummary;
   engine: ScanEngineStatus;
   warnings: string[];
+  /** Explicit statement of what the scan did and did not cover. */
+  coverage: ScanCoverage;
   baseline?: {
     applied: boolean;
     path?: string;
@@ -142,45 +178,67 @@ export interface ProjectSecurityScan {
   };
 }
 
-// ─── Secret Finding (extends Finding with entropy) ───────────────────────────
+// Secret Finding (extends Finding with entropy)
 
 export interface SecretFinding extends Finding {
-  /** Shannon entropy score of the detected value */
+  /** Shannon entropy of the detected value. */
   entropyScore: number;
-  /** The type of secret detected */
   secretType: string;
 }
 
 export interface HistorySecretFinding extends SecretFinding {
-  /** Commit hash that introduced or contained the secret */
+  /** Commit that introduced or contained the secret. */
   commitHash: string;
-  /** ISO-8601 commit timestamp when available */
+  /** ISO-8601 commit timestamp, when available. */
   commitDate?: string;
 }
 
-// ─── Sentinel Config ────────────────────────────────────────────────────────
+// Sentinel Config
 
 export interface SentinelConfig {
-  /** Relative file or directory paths to skip */
+  /** Relative paths, basenames, or globs to skip. */
   ignorePaths?: string[];
-  /** Rule IDs to suppress from results */
+  /** Rule IDs to suppress from results. */
   ignoreRules?: string[];
-  /** Only include findings at or above this severity */
+  /** Only report findings at or above this severity. */
   minimumSeverity?: Severity;
-  /** CI should fail when findings at or above this severity exist */
+  /** CI fails when findings at or above this severity exist. */
   failOnSeverity?: Severity;
+  /** Upper bound on files visited in one scan. */
+  maxFiles?: number;
+  /** Parallel file reads, bounded to protect file-descriptor limits. */
+  concurrency?: number;
+  /** Disable every outbound network call: advisory lookups and registry rules. */
+  offline?: boolean;
+  semgrep?: {
+    /** Set false to force the built-in pattern engine. */
+    enabled?: boolean;
+    timeoutMs?: number;
+    /**
+     * Registry rule packs, for example "p/javascript". Empty by default:
+     * packs are downloaded at scan time and float between versions, so opting
+     * in is what keeps a scan reproducible.
+     */
+    registryRulesets?: string[];
+  };
 }
 
-// ─── GitHub PR Types ─────────────────────────────────────────────────────────
+// GitHub PR Types
 
 export interface PrInfo {
   number: number;
   title: string;
   author: string;
   createdAt: string;
-  changedFiles: number;
-  additions: number;
-  deletions: number;
+  /**
+   * Size of the change, when the endpoint that produced this record reported
+   * it. The pull-request list endpoint does not, so these are undefined there;
+   * only fetching a single pull request fills them in. Undefined means unknown,
+   * which a zero would misrepresent as an empty change.
+   */
+  changedFiles?: number;
+  additions?: number;
+  deletions?: number;
 }
 
 export interface PrDiffFile {
@@ -197,8 +255,6 @@ export interface SecurityReviewComment {
   body: string;
   severity: Severity;
 }
-
-// ─── CWE Knowledge Base ──────────────────────────────────────────────────────
 
 export interface CweEntry {
   id: string;

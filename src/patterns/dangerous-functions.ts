@@ -23,7 +23,12 @@ export const dangerousFunctionPatterns: SecurityPattern[] = [
   },
   {
     id: "CHILD_PROCESS_EXEC",
-    regex: /(?:exec|execSync)\s*\(\s*(?:`[^`]*\$\{|['"].*?\+\s*(?:req\.|params\.|input|user|arg))/i,
+    // Deliberately identical to COMMAND_INJECTION_EXEC in injection.ts, which
+    // reports the same code under a different category. A test asserts the two
+    // stay in step: they had already diverged once, when the RegExp.exec
+    // exclusion was added to one and not the other, so the false positive it
+    // fixed carried on being reported by this rule instead.
+    regex: /(?<!\/[gimsuy]{0,4}\.)\b(?:exec|execSync)\s*\(\s*(?:`[^`]*\$\{|['"].*?\+\s*(?:req\.|params\.|input|user|arg))/i,
     severity: "high",
     category: "dangerous-functions",
     cweId: "CWE-78",
@@ -43,7 +48,10 @@ export const dangerousFunctionPatterns: SecurityPattern[] = [
   },
   {
     id: "UNSERIALIZE",
-    regex: /(?:unserialize|deserialize|pickle\.loads?|yaml\.load\s*\((?!.*Loader))\s*\(/i,
+    // yaml.load is deliberately absent: js-yaml v4 made it the safe entry point,
+    // so matching it here flagged correct JavaScript. PY_YAML_LOAD covers
+    // Python, where the Loader argument decides safety.
+    regex: /(?:unserialize|deserialize|pickle\.loads?)\s*\(/i,
     severity: "critical",
     category: "dangerous-functions",
     cweId: "CWE-502",

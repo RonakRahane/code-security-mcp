@@ -1,0 +1,285 @@
+# Sentinel AI/LLM security rules.
+#
+# A normal user message sent to an LLM is not, by itself, a vulnerability.
+# These rules therefore focus on stronger signals: untrusted data crossing a
+# system/developer boundary, model output controlling execution, secret-bearing
+# context, and externally observable system prompts.
+
+rules:
+  - id: sentinel.ai.prompt-injection.untrusted-system-message
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      Untrusted HTTP input reaches an LLM system message. Keep system or
+      developer instructions static and place user content in a separate,
+      explicitly untrusted message.
+    metadata:
+      category: security
+      cwe: CWE-74
+      sentinel:
+        category: ai
+        severity: high
+        confidence: high
+      remediation: >-
+        Keep the system message a constant. Move user-supplied or retrieved text
+        into a user message, clearly delimited.
+        owasp_llm: LLM01
+    mode: taint
+    pattern-sources:
+      - pattern-either:
+          - pattern: $REQ.body
+          - pattern: $REQ.query
+          - pattern: $REQ.params
+          - pattern: $REQUEST.body
+          - pattern: $REQUEST.query
+          - pattern: $REQUEST.params
+    pattern-sinks:
+      - patterns:
+          - pattern-inside: |
+              $CLIENT.chat.completions.create({
+                ...,
+                messages: [..., {role: "system", content: $CONTENT, ...}, ...],
+                ...
+              })
+          - pattern: $CONTENT
+
+  - id: sentinel.ai.prompt-injection.untrusted-anthropic-system-prompt
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      Untrusted HTTP input reaches an LLM system prompt. Keep system or
+      developer instructions static and handle user content as a distinct,
+      untrusted message.
+    metadata:
+      category: security
+      cwe: CWE-74
+      sentinel:
+        category: ai
+        severity: high
+        confidence: high
+      remediation: >-
+        Keep the system prompt a constant. Pass untrusted text as a user message
+        so the model treats it as data rather than instructions.
+        owasp_llm: LLM01
+    mode: taint
+    pattern-sources:
+      - pattern-either:
+          - pattern: $REQ.body
+          - pattern: $REQ.query
+          - pattern: $REQ.params
+          - pattern: $REQUEST.body
+          - pattern: $REQUEST.query
+          - pattern: $REQUEST.params
+    pattern-sinks:
+      - patterns:
+          - pattern-inside: |
+              $CLIENT.messages.create({..., system: $SYSTEM_PROMPT, ...})
+          - pattern: $SYSTEM_PROMPT
+
+  - id: sentinel.ai.improper-output-handling.code-execution
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      Likely LLM output reaches dynamic code execution. Treat model output as
+      untrusted data; validate it against a schema and never pass it to eval or
+      Function.
+    metadata:
+      category: security
+      cwe: CWE-95
+      sentinel:
+        category: ai
+        severity: critical
+        confidence: high
+      remediation: >-
+        Never execute model output. Where generated code must run, use a sandbox
+        with no network or filesystem access and a hard timeout.
+        owasp_llm: LLM05
+    mode: taint
+    pattern-sources:
+      - pattern-either:
+          - pattern: $RESPONSE.output_text
+          - pattern: $RESPONSE.output
+          - pattern: $RESPONSE.choices[...].message.content
+          - pattern: $RESPONSE.content[...].text
+    pattern-sinks:
+      - pattern-either:
+          - pattern: eval($CODE)
+          - pattern: new Function($CODE)
+
+  - id: sentinel.ai.improper-output-handling.shell-execution
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      Likely LLM output reaches a shell-execution API. Map model output to a
+      strict allowlist of actions and validated arguments; do not execute it.
+    metadata:
+      category: security
+      cwe: CWE-78
+      sentinel:
+        category: ai
+        severity: critical
+        confidence: high
+      remediation: >-
+        Never pass model output to a shell. Use an argument array with execFile or
+        subprocess.run, and restrict the command to a fixed allowlist.
+        owasp_llm: LLM05
+    mode: taint
+    pattern-sources:
+      - pattern-either:
+          - pattern: $RESPONSE.output_text
+          - pattern: $RESPONSE.output
+          - pattern: $RESPONSE.choices[...].message.content
+          - pattern: $RESPONSE.content[...].text
+    pattern-sinks:
+      - pattern-either:
+          - pattern: exec($COMMAND, ...)
+          - pattern: execSync($COMMAND, ...)
+          - pattern: $CHILD_PROCESS.exec($COMMAND, ...)
+          - pattern: $CHILD_PROCESS.execSync($COMMAND, ...)
+
+  - id: sentinel.ai.improper-output-handling.html-rendering
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      Likely LLM output reaches an HTML interpretation sink. Render model
+      output as text or sanitize it with a well-maintained HTML sanitizer.
+    metadata:
+      category: security
+      cwe: CWE-79
+      sentinel:
+        category: ai
+        severity: high
+        confidence: high
+      remediation: >-
+        Render model output as text. If HTML is required, sanitize it with a
+        maintained sanitizer such as DOMPurify and apply a
+        Content-Security-Policy.
+        owasp_llm: LLM05
+    mode: taint
+    pattern-sources:
+      - pattern-either:
+          - pattern: $RESPONSE.output_text
+          - pattern: $RESPONSE.output
+          - pattern: $RESPONSE.choices[...].message.content
+          - pattern: $RESPONSE.content[...].text
+    pattern-sinks:
+      - pattern-either:
+          - pattern: $ELEMENT.innerHTML = $HTML
+          - pattern: $ELEMENT.outerHTML = $HTML
+          - pattern: document.write($HTML)
+
+  - id: sentinel.ai.excessive-agency.dynamic-tool-dispatch
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      Likely LLM output selects a callable tool dynamically. Resolve model
+      requests through a fixed allowlist with per-tool authorization checks.
+    metadata:
+      category: security
+      cwe: CWE-94
+      sentinel:
+        category: ai
+        severity: high
+        confidence: high
+      remediation: >-
+        Dispatch tools through a fixed allowlist keyed by name. Never resolve a
+        tool from model output directly, and validate arguments against the tool's
+        schema before invoking it.
+        owasp_llm: LLM06
+    mode: taint
+    pattern-sources:
+      - pattern-either:
+          - pattern: $RESPONSE.output_text
+          - pattern: $RESPONSE.output
+          - pattern: $RESPONSE.choices[...].message.content
+          - pattern: $RESPONSE.content[...].text
+    pattern-sinks:
+      - pattern-either:
+          - pattern: $TOOLS[$ACTION](...)
+          - pattern: $FUNCTIONS[$ACTION](...)
+          - pattern: $ACTIONS[$ACTION](...)
+
+  - id: sentinel.ai.sensitive-information.system-prompt-exposed
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      A variable named like a system/developer prompt is returned to a client.
+      Keep privileged instructions server-side and expose only intended output.
+    metadata:
+      category: security
+      cwe: CWE-200
+      sentinel:
+        category: ai
+        severity: high
+        confidence: high
+      remediation: >-
+        Do not return the system prompt to callers. Log it server-side if you need
+        it for debugging.
+        owasp_llm: LLM02
+    patterns:
+      - pattern-either:
+          - pattern: $RESPONSE.send($PROMPT)
+          - pattern: $RESPONSE.end($PROMPT)
+      - metavariable-regex:
+          metavariable: $PROMPT
+          regex: "(?i)^(system_prompt|systemPrompt|developer_prompt|developerPrompt|internal_instructions|internalInstructions)$"
+
+  - id: sentinel.ai.sensitive-information.secret-in-system-prompt
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      An environment value named like a credential is included in an LLM system
+      prompt. Redact credentials before constructing model context.
+    metadata:
+      category: security
+      cwe: CWE-201
+      sentinel:
+        category: ai
+        severity: high
+        confidence: high
+      remediation: >-
+        Remove the credential from the prompt. Call the authenticated service from
+        your own backend and give the model only the result.
+        owasp_llm: LLM02
+    patterns:
+      - pattern-inside: |
+          $CLIENT.chat.completions.create({
+            ...,
+            messages: [..., {role: "system", content: $CONTENT, ...}, ...],
+            ...
+          })
+      - pattern: process.env.$SECRET
+      - metavariable-regex:
+          metavariable: $SECRET
+          regex: "(?i).*(secret|token|password|api_?key|credential).*"
+
+  - id: sentinel.ai.supply-chain.dynamic-package-install
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      Likely LLM output controls a package-install command. Do not install
+      model-suggested packages automatically; require a reviewed allowlist.
+    metadata:
+      category: security
+      cwe: CWE-494
+      sentinel:
+        category: ai
+        severity: high
+        confidence: high
+      remediation: >-
+        Never install packages named by model output. Pre-install a fixed
+        dependency set and pin every version.
+        owasp_llm: LLM03
+    mode: taint
+    pattern-sources:
+      - pattern-either:
+          - pattern: $RESPONSE.output_text
+          - pattern: $RESPONSE.output
+          - pattern: $RESPONSE.choices[...].message.content
+          - pattern: $RESPONSE.content[...].text
+    pattern-sinks:
+      - pattern-either:
+          - pattern: exec(`npm install ...`, ...)
+          - pattern: exec(`pnpm add ...`, ...)
+          - pattern: exec(`yarn add ...`, ...)
+          - pattern: exec(`pip install ...`, ...)

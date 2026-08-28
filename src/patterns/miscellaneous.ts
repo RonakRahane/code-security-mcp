@@ -1,6 +1,42 @@
 import { SecurityPattern } from "../types/index.js";
 
 export const miscPatterns: SecurityPattern[] = [
+  // Unrestricted file upload, CWE-434 and number 10 on the CWE Top 25. An
+  // upload endpoint that accepts any type and any size lets an attacker place
+  // a script inside the served tree or exhaust the disk.
+  {
+    id: "UPLOAD_NO_RESTRICTIONS",
+    // Neither limits nor fileFilter anywhere in the options object. Both are
+    // the documented hardening, and reporting a configuration that already has
+    // them is worse than staying quiet.
+    regex: /\bmulter\s*\(\s*\{(?![^}]*\b(?:limits|fileFilter)\s*:)[^}]*\bdest\s*:/,
+    severity: "medium",
+    category: "miscellaneous",
+    cweId: "CWE-434",
+    message: "File upload configured with a destination but no type or size limit. Any file of any size is accepted.",
+    remediation: "Pass fileFilter to reject unexpected MIME types and limits: { fileSize } to cap the size. Store uploads outside the web root and never trust the client-supplied filename.",
+    languages: ["javascript", "typescript"],
+  },
+  {
+    id: "UPLOAD_MEMORY_STORAGE_UNBOUNDED",
+    regex: /multer\s*\.\s*memoryStorage\s*\(\s*\)(?![\s\S]{0,120}\blimits\s*:)/,
+    severity: "medium",
+    category: "miscellaneous",
+    cweId: "CWE-434",
+    message: "Uploads buffered in memory. Without a size limit a large upload exhausts the process heap.",
+    remediation: "Add limits: { fileSize } alongside memoryStorage, or stream to disk instead.",
+    languages: ["javascript", "typescript"],
+  },
+  {
+    id: "PY_UPLOAD_UNSAFE_FILENAME",
+    regex: /\.\s*save\s*\((?![^)]*secure_filename)[^)]*\w*file\w*\s*\.\s*filename/i,
+    severity: "high",
+    category: "miscellaneous",
+    cweId: "CWE-434",
+    message: "Uploaded file saved under its client-supplied name. The name can contain path separators or an executable extension.",
+    remediation: "Use werkzeug.utils.secure_filename(), or generate a name yourself and keep the original only as metadata.",
+    languages: ["python"],
+  },
   {
     id: "CORS_WILDCARD",
     regex: /(?:Access-Control-Allow-Origin|origin)\s*[:=]\s*['"]?\*/i,
@@ -34,8 +70,8 @@ export const miscPatterns: SecurityPattern[] = [
   },
   {
     id: "DEBUG_MODE_PROD",
-    // `1` is anchored with \b so `debug: 10` — a log-level constant — no longer
-    // matches as `debug: 1`.
+    // `1` is anchored with \b so a log-level constant such as `debug: 10` does
+    // not match as `debug: 1`.
     regex: /(?:^|[^\w.])(?:DEBUG|debug)\s*[:=]\s*(?:true\b|1\b|['"]true['"])|app\.set\s*\(\s*['"]env['"]\s*,\s*['"]development['"]\)/i,
     severity: "medium",
     category: "miscellaneous",

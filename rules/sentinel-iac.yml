@@ -1,0 +1,310 @@
+# Sentinel IaC and CI configuration rules.
+#
+# The rules target explicit high-risk settings rather than policy preferences.
+# This keeps the pack useful in existing repositories without treating every
+# organizational convention as a vulnerability.
+
+rules:
+  - id: sentinel.iac.dockerfile.explicit-root-user
+    languages: [dockerfile]
+    severity: WARNING
+    message: >-
+      The container explicitly runs as root. Create and select an unprivileged
+      user before the final runtime instruction.
+    metadata:
+      category: security
+      cwe: CWE-250
+      sentinel:
+        category: iac
+        severity: high
+        confidence: high
+      remediation: >-
+        Create an unprivileged user and select it with USER before CMD or
+        ENTRYPOINT.
+    pattern: |
+      USER root
+
+  - id: sentinel.iac.dockerfile.remote-add
+    languages: [generic]
+    severity: WARNING
+    message: >-
+      Dockerfile ADD downloads a remote resource without an integrity check.
+      Fetch a pinned artifact and verify its checksum instead.
+    metadata:
+      category: security
+      cwe: CWE-494
+      sentinel:
+        category: iac
+        severity: medium
+        confidence: high
+      remediation: >-
+        Fetch a pinned version with RUN curl and verify its checksum. ADD from a
+        URL performs no integrity check.
+    paths:
+      include:
+        - Dockerfile
+        - "**/Dockerfile"
+        - "*.dockerfile"
+        - "**/*.dockerfile"
+    pattern-regex: "(?im)^\\s*ADD\\s+https?://"
+
+  - id: sentinel.iac.dockerfile.curl-pipe-shell
+    languages: [generic]
+    severity: ERROR
+    message: >-
+      A downloaded script is piped directly to a shell during the image build.
+      Download a pinned artifact, verify its checksum, and execute it explicitly.
+    metadata:
+      category: security
+      cwe: CWE-494
+      sentinel:
+        category: iac
+        severity: high
+        confidence: high
+      remediation: >-
+        Download to a file, verify its checksum, then execute it. Piping a
+        download to a shell runs whatever the server returns.
+    paths:
+      include:
+        - Dockerfile
+        - "**/Dockerfile"
+        - "*.dockerfile"
+        - "**/*.dockerfile"
+    pattern-regex: "(?im)^\\s*RUN\\s+.*(?:curl|wget)\\b.*\\|\\s*(?:ba)?sh\\b"
+
+  - id: sentinel.iac.container.privileged-mode
+    languages: [yaml]
+    severity: ERROR
+    message: >-
+      A container is configured as privileged. Remove privileged mode and grant
+      only the minimal Linux capabilities required by the workload.
+    metadata:
+      category: security
+      cwe: CWE-250
+      sentinel:
+        category: iac
+        severity: high
+        confidence: high
+      remediation: >-
+        Remove privileged: true and grant only the specific capabilities the
+        workload needs through cap_add.
+    pattern: |
+      privileged: true
+
+  - id: sentinel.iac.kubernetes.host-network
+    languages: [yaml]
+    severity: WARNING
+    message: >-
+      A workload enables host networking. Isolate the workload with normal pod
+      networking unless host-network access is explicitly required and reviewed.
+    metadata:
+      category: security
+      cwe: CWE-668
+      sentinel:
+        category: iac
+        severity: high
+        confidence: high
+      remediation: >-
+        Remove hostNetwork: true and expose the workload through a Service. Host
+        networking bypasses network policy.
+    pattern: |
+      hostNetwork: true
+
+  - id: sentinel.iac.kubernetes.host-pid
+    languages: [yaml]
+    severity: WARNING
+    message: >-
+      A workload shares the host PID namespace. Disable hostPID unless the
+      workload has a documented, reviewed operational requirement.
+    metadata:
+      category: security
+      cwe: CWE-250
+      sentinel:
+        category: iac
+        severity: high
+        confidence: high
+      remediation: >-
+        Remove hostPID: true. Sharing the host PID namespace exposes every process
+        on the node.
+    pattern: |
+      hostPID: true
+
+  - id: sentinel.iac.kubernetes.allow-privilege-escalation
+    languages: [yaml]
+    severity: WARNING
+    message: >-
+      A container permits privilege escalation. Set allowPrivilegeEscalation to
+      false unless a narrowly reviewed exception is required.
+    metadata:
+      category: security
+      cwe: CWE-250
+      sentinel:
+        category: iac
+        severity: high
+        confidence: high
+      remediation: >-
+        Set allowPrivilegeEscalation: false in the container's securityContext.
+    pattern: |
+      allowPrivilegeEscalation: true
+
+  - id: sentinel.iac.terraform.public-ssh-security-group
+    languages: [terraform]
+    severity: ERROR
+    message: >-
+      An AWS security-group ingress rule exposes SSH to the public Internet.
+      Restrict port 22 to a trusted CIDR or a managed access path.
+    metadata:
+      category: security
+      cwe: CWE-284
+      sentinel:
+        category: iac
+        severity: critical
+        confidence: high
+      remediation: >-
+        Restrict port 22 to a specific CIDR, or use AWS Systems Manager Session
+        Manager instead of opening SSH.
+    patterns:
+      - pattern-inside: |
+          resource "aws_security_group" "$NAME" {
+            ...
+            ingress {
+              ...
+            }
+            ...
+          }
+      - pattern: |
+          from_port = 22
+      - pattern-either:
+          - pattern: |
+              cidr_blocks = ["0.0.0.0/0"]
+          - pattern: |
+              cidr_blocks = ["::/0"]
+
+  - id: sentinel.iac.terraform.public-rdp-security-group
+    languages: [terraform]
+    severity: ERROR
+    message: >-
+      An AWS security-group ingress rule exposes RDP to the public Internet.
+      Restrict port 3389 to a trusted CIDR or a managed access path.
+    metadata:
+      category: security
+      cwe: CWE-284
+      sentinel:
+        category: iac
+        severity: critical
+        confidence: high
+      remediation: >-
+        Restrict port 3389 to a specific CIDR, or reach the host through a bastion
+        or AWS Systems Manager Session Manager.
+    patterns:
+      - pattern-inside: |
+          resource "aws_security_group" "$NAME" {
+            ...
+            ingress {
+              ...
+            }
+            ...
+          }
+      - pattern: |
+          from_port = 3389
+      - pattern-either:
+          - pattern: |
+              cidr_blocks = ["0.0.0.0/0"]
+          - pattern: |
+              cidr_blocks = ["::/0"]
+
+  - id: sentinel.iac.terraform.s3-public-acls-enabled
+    languages: [terraform]
+    severity: WARNING
+    message: >-
+      AWS S3 public ACL blocking is disabled. Keep public-access blocks enabled
+      unless this bucket has a specifically reviewed public-access design.
+    metadata:
+      category: security
+      cwe: CWE-284
+      sentinel:
+        category: iac
+        severity: high
+        confidence: high
+      remediation: >-
+        Set block_public_acls = true, along with the other three public-access
+        block settings.
+    patterns:
+      - pattern-inside: |
+          resource "aws_s3_bucket_public_access_block" "$NAME" {
+            ...
+          }
+      - pattern: |
+          block_public_acls = false
+
+  - id: sentinel.iac.github-actions.unpinned-action
+    languages: [generic]
+    severity: WARNING
+    message: >-
+      A GitHub Action is referenced by a mutable tag or branch. Pin third-party
+      actions to a full commit SHA and review updates deliberately.
+    metadata:
+      category: security
+      cwe: CWE-494
+      sentinel:
+        category: iac
+        severity: medium
+        confidence: high
+      remediation: >-
+        Pin the action to a full 40-character commit SHA. A tag is mutable and can
+        be repointed at different code.
+    paths:
+      include:
+        - ".github/workflows/*.yml"
+        - ".github/workflows/*.yaml"
+        - "**/.github/workflows/*.yml"
+        - "**/.github/workflows/*.yaml"
+    pattern-regex: "(?m)^\\s*uses:\\s*[^@\\s]+@(?![A-Fa-f0-9]{40}(?:\\s|$))[^\\s#]+"
+
+  - id: sentinel.iac.github-actions.pull-request-target
+    languages: [generic]
+    severity: WARNING
+    message: >-
+      pull_request_target runs with base-repository privileges. Do not check out
+      or execute untrusted pull-request code in this workflow.
+    metadata:
+      category: security
+      cwe: CWE-269
+      sentinel:
+        category: iac
+        severity: high
+        confidence: high
+      remediation: >-
+        Use pull_request instead. pull_request_target runs with repository secrets
+        and write access while checking out untrusted pull-request code.
+    paths:
+      include:
+        - ".github/workflows/*.yml"
+        - ".github/workflows/*.yaml"
+        - "**/.github/workflows/*.yml"
+        - "**/.github/workflows/*.yaml"
+    pattern-regex: "(?m)^\\s*pull_request_target\\s*:"
+
+  - id: sentinel.iac.github-actions.echo-secret
+    languages: [generic]
+    severity: ERROR
+    message: >-
+      A GitHub Actions step writes a repository secret to command output. Remove
+      the output and pass the secret only to the process that needs it.
+    metadata:
+      category: security
+      cwe: CWE-200
+      sentinel:
+        category: iac
+        severity: critical
+        confidence: high
+      remediation: >-
+        Remove the echo. Pass the secret through env and let the tool read it;
+        anything printed to the log is retrievable by anyone who can read the run.
+    paths:
+      include:
+        - ".github/workflows/*.yml"
+        - ".github/workflows/*.yaml"
+        - "**/.github/workflows/*.yml"
+        - "**/.github/workflows/*.yaml"
+    pattern-regex: "(?m)^\\s*(?:echo|printf)\\b.*\\$\\{\\{\\s*secrets\\."
