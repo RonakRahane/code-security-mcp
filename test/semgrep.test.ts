@@ -200,7 +200,12 @@ describe("targets can never be read as flags", () => {
       "/repo/lib/util.ts",
     ]);
 
-    expect(batch).toEqual(["src/app.js", "lib/util.ts"]);
+    // Built with path.join, because Semgrep is handed native paths and
+    // path.relative yields "src\\app.js" on Windows. The property under test is
+    // that an ordinary path is made relative and left unprefixed, not which
+    // separator the platform uses - asserting the POSIX spelling failed both
+    // Windows legs of CI while the behaviour was correct.
+    expect(batch).toEqual([path.join("src", "app.js"), path.join("lib", "util.ts")]);
   });
 
   it("keeps a dash-leading name out of flag position at every depth", () => {

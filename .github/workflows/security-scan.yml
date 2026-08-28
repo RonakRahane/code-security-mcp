@@ -49,7 +49,7 @@ jobs:
       # request adding {"ignorePaths": ["**"]} turns a failing gate into a
       # passing one, so a change to the policy has to be reviewed by a person
       # rather than applied to the run that is meant to police it.
-      - name: Refuse a scan policy supplied by the pull request
+      - name: Ignore a scan policy supplied by the pull request
         if: github.event_name == 'pull_request'
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
@@ -59,14 +59,27 @@ jobs:
           git fetch --no-tags --depth=1 origin "$BASE_SHA" "$HEAD_SHA" 2>/dev/null || true
           CHANGED=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA" -- \
             sentinel.config.json .sentinelrc.json .sentinelignore .sentinel-baseline.json || true)
-          if [ -n "$CHANGED" ]; then
-            echo "This pull request changes the scan policy:"
-            echo "$CHANGED"
-            echo
-            echo "Policy changes are not applied to the scan that checks them."
-            echo "Review the change and merge it separately."
-            exit 1
+          if [ -z "$CHANGED" ]; then
+            echo "The pull request does not change the scan policy."
+            exit 0
           fi
+          # The policy is restored to the base revision rather than the job
+          # being failed. Failing punished every legitimate policy change,
+          # including the pull request that introduces these files at all,
+          # while restoring achieves the actual goal: a pull request cannot
+          # weaken the scan that reviews it. A file the base does not have is
+          # deleted, so adding {"ignorePaths": ["**"]} has no effect either.
+          echo "Scan policy changed by this pull request; restoring the base revision for the scan:"
+          echo "$CHANGED"
+          for FILE in $CHANGED; do
+            if git cat-file -e "$BASE_SHA:$FILE" 2>/dev/null; then
+              git checkout "$BASE_SHA" -- "$FILE"
+              echo "  restored $FILE"
+            else
+              rm -f "$FILE"
+              echo "  removed $FILE (not present in the base revision)"
+            fi
+          done
 
       - name: Run Sentinel scan
         id: scan
@@ -85,7 +98,7 @@ jobs:
           category: sentinel
 
       - name: Attach scan report
-        if: always()
+        if: always() && hashFiles('scan-report.md', 'sentinel.sarif') != ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: sentinel-report
@@ -94,8 +107,11 @@ jobs:
             sentinel.sarif
           retention-days: 14
 
+      # hashFiles guards the read: if an earlier step failed before the scan
+      # ran, there is no report, and github-script would abort the job with an
+      # unhandled ENOENT that hides the real failure.
       - name: Comment on pull request
-        if: always() && github.event_name == 'pull_request'
+        if: always() && github.event_name == 'pull_request' && hashFiles('scan-report.md') != ''
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         with:
           script: |
