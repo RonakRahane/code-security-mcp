@@ -11,4 +11,8 @@ app.get("/legacy-calc", (req, res) => {
   res.json({ result: eval(req.query.expr) });
 });
 
+app.get("/archive", (req, res) => {
+  exec("tar czf /tmp/out.tgz " + req.query.dir, () => res.end());
+});
+
 module.exports = app;
